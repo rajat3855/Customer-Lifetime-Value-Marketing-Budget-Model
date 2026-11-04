@@ -4,13 +4,7 @@ Run from the project folder:  python src/clv_pipeline.py
 Generated from notebooks/CLV_Project.ipynb (same code, same order).
 """
 
-# ======================================================================================
-# Customer Lifetime Value: how much can marketing spend to acquire each customer segment?
-# ======================================================================================
-# Setup. Every library has one job:
-#   pandas/numpy  -> tables and maths        matplotlib -> charts
-#   lifetimes     -> BG/NBD + Gamma-Gamma    scikit-learn -> the ML challenger
-#   scipy         -> Spearman rank correlation
+
 import sys, json, warnings
 from pathlib import Path
 
@@ -19,25 +13,21 @@ import pandas as pd
 import matplotlib
 IN_NOTEBOOK = "ipykernel" in sys.modules
 if not IN_NOTEBOOK:
-    matplotlib.use("Agg")          # script mode: save charts to files, don't open windows
+    matplotlib.use("Agg")          
 import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
 from lifetimes import BetaGeoFitter, GammaGammaFitter
 from lifetimes.utils import summary_data_from_transaction_data, calibration_and_holdout_data
 from sklearn.ensemble import HistGradientBoostingRegressor
 
-# lifetimes prints long optimiser messages and a few harmless pandas FutureWarnings.
-# We silence ONLY those categories - convergence errors are still raised as exceptions.
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="pandas")
 
-# Folders (works whether you run from the project root, notebooks/ or src/)
 ROOT = Path.cwd() if (Path.cwd() / "data").exists() else Path.cwd().parent
 DATA, PLOTS, OUT = ROOT / "data", ROOT / "plots", ROOT / "outputs"
 PLOTS.mkdir(exist_ok=True); OUT.mkdir(exist_ok=True)
 sys.path.insert(0, str(ROOT / "src"))
 
-# ---- Assumptions (all in one place, all editable) ----
 MARGIN = 0.30          # gross margin - ASSUMED, the data has no cost figures
 TARGET_RATIO = 3.0     # target LTV:CAC (spend at most 1/3 of a customer's gross profit)
 HOLDOUT_DAYS = 180     # length of the "future" we hide for testing
@@ -46,7 +36,6 @@ MONTHLY_DISCOUNT = 0.01  # 1% a month: £1 next year is worth a bit less than £
 CAP_QUANTILE = 0.995   # winsorise extreme purchase-days (one-off giant wholesale orders)
 SEED = 42
 
-# ---- Chart style: one quiet look for every plot ----
 BLUE, ORANGE, AQUA, GREY = "#2a78d6", "#eb6834", "#1baf7a", "#898781"
 plt.rcParams.update({
     "figure.facecolor": "#fcfcfb", "axes.facecolor": "#fcfcfb", "savefig.facecolor": "#fcfcfb",
@@ -66,12 +55,9 @@ def save(fig, name):
 
 pd.set_option("display.width", 160); pd.set_option("display.max_columns", 20)
 if not IN_NOTEBOOK:
-    sys.stdout.reconfigure(encoding="utf-8")   # so £ prints correctly in Windows terminals
+    sys.stdout.reconfigure(encoding="utf-8")   
 print("Project folder:", ROOT)
 
-# ======================================================================================
-# Stage 1 - Load and clean
-# ======================================================================================
 csv_path, xlsx_path = DATA / "online_retail_II.csv.gz", DATA / "online_retail_II.xlsx"
 if csv_path.exists():
     raw = pd.read_csv(csv_path, dtype={"Invoice": str, "StockCode": str}, parse_dates=["InvoiceDate"])
@@ -107,10 +93,7 @@ ax.set_xlabel("Rows left (thousands)"); ax.set_title("Cleaning waterfall: 1.07M 
 ax.set_xlim(0, 1250); ax.grid(axis="y", visible=False)
 save(fig, "01_cleaning_waterfall.png")
 
-# ======================================================================================
-# From invoice lines to "purchase days"
-# ======================================================================================
-tx = df.groupby(["customer", "date"], as_index=False)["revenue"].sum()   # one row = one purchase day
+tx = df.groupby(["customer", "date"], as_index=False)["revenue"].sum()   
 country = df.groupby("customer")["Country"].agg(lambda s: s.mode().iat[0])
 is_uk = (country == "United Kingdom")
 OBS_END = tx["date"].max()
@@ -118,9 +101,6 @@ print(f"{len(tx):,} purchase days from {tx['customer'].nunique():,} customers; l
 print(f"UK customers: {is_uk.mean():.1%}")
 print(tx.head())
 
-# ======================================================================================
-# Stage 2 - Explore the data (EDA)
-# ======================================================================================
 monthly = tx.assign(month=tx["date"].dt.to_period("M")).groupby("month")["revenue"].sum()
 fig, ax = plt.subplots(figsize=(9, 3.6))
 colors = [ORANGE if m.month in (9, 10, 11) else BLUE for m in monthly.index]
@@ -148,13 +128,6 @@ save(fig, "03_revenue_concentration.png")
 print(f"Top 10% of customers: {top10:.1f}% of revenue | top 20%: {top20:.1f}%")
 print(cust_rev.describe(percentiles=[.5, .9, .99]).round(0).to_string())
 
-# ======================================================================================
-# **What we learned**
-# ======================================================================================
-
-# ======================================================================================
-# Stage 3 - CLV v1: the textbook formula
-# ======================================================================================
 n_cust = tx["customer"].nunique()
 aov = tx["revenue"].mean()                                    # average purchase-day value
 years = (OBS_END - tx["date"].min()).days / 365
@@ -165,13 +138,6 @@ clv_v1 = aov * freq_per_year * lifespan * MARGIN
 print(f"AOV £{aov:,.0f} x {freq_per_year:.2f} purchases/yr x lifespan {lifespan:.1f} yrs x margin {MARGIN:.0%}")
 print(f"=> textbook CLV (gross profit) = £{clv_v1:,.0f} per customer  =>  'max CAC' = £{clv_v1 / TARGET_RATIO:,.0f}")
 
-# ======================================================================================
-# **Why we cannot hand this number to marketing**
-# ======================================================================================
-
-# ======================================================================================
-# Stage 4 - CLV v2: what did new customers *really* spend in their first 12 months?
-# ======================================================================================
 first_date = tx.groupby("customer")["date"].min()
 first_order = tx.sort_values("date").groupby("customer")["revenue"].first()
 cohort_ids = first_date[(first_date >= "2010-03-01") & (first_date <= OBS_END - pd.Timedelta(days=365))].index
@@ -208,13 +174,6 @@ from matplotlib.patches import Patch
 ax.legend(handles=[Patch(color=BLUE, label="UK"), Patch(color=AQUA, label="International")], loc="upper left")
 save(fig, "04_max_cac_by_acquisition_segment.png")
 
-# ======================================================================================
-# **This is already a real answer** - and it took no modelling at all. A customer whose first order is "Large" is worth
-# ======================================================================================
-
-# ======================================================================================
-# Stage 5 - RFM segments: simple rules for existing customers
-# ======================================================================================
 CAL_END = OBS_END - pd.Timedelta(days=HOLDOUT_DAYS)
 past = tx[tx["date"] <= CAL_END]
 future = tx[tx["date"] > CAL_END]
@@ -253,21 +212,10 @@ ax.set_xlabel("Average revenue in the NEXT 180 days (£)"); ax.set_xlim(0, rfm_t
 ax.set_title("RFM segments really do predict the future"); ax.grid(axis="y", visible=False)
 save(fig, "05_rfm_segments_next_180d.png")
 
-# ======================================================================================
-# RFM already separates customers well: Champions spend many times more than Hibernating customers in the next six months.
-# ======================================================================================
-
-# ======================================================================================
-# Stage 6 - The honest exam: holdout test + baselines
-# ======================================================================================
-# Cap extreme purchase days. The cap is learned from the CALIBRATION period only (no peeking at the test period).
 cap = past["revenue"].quantile(CAP_QUANTILE)
 tx_c = tx.assign(revenue=tx["revenue"].clip(upper=cap))
 print(f"Purchase-day cap: £{cap:,.0f}  ({(past['revenue'] > cap).sum()} calibration purchase-days capped)")
 
-# lifetimes builds the per-customer summary for us:
-#   frequency = number of REPEAT purchase days, recency = age at last purchase, T = age at cut-off (days)
-#   monetary_value = average value of the repeat purchases
 cal = calibration_and_holdout_data(tx_c, "customer", "date", calibration_period_end=CAL_END,
                                    observation_period_end=OBS_END, freq="D", monetary_value_col="revenue")
 actual = tx_c[tx_c["date"] > CAL_END].groupby("customer")["revenue"].sum().reindex(cal.index).fillna(0)
@@ -291,13 +239,6 @@ results.append(evaluate("Baseline: RFM score", rfm["RFM_score"].reindex(cal.inde
 results.append(evaluate("Baseline: same £ for everyone", np.full(len(cal), actual.mean())))
 print(pd.DataFrame(results).set_index("model").round(3))
 
-# ======================================================================================
-# "History repeats" overshoots the total by about 50%: it assumes nobody ever leaves. The RFM score ranks
-# ======================================================================================
-
-# ======================================================================================
-# Stage 7 - BG/NBD + Gamma-Gamma (the classic CLV models)
-# ======================================================================================
 bgf = BetaGeoFitter(penalizer_coef=0.001)
 bgf.fit(cal["frequency_cal"], cal["recency_cal"], cal["T_cal"])
 print("BG/NBD parameters:", {k: round(v, 3) for k, v in bgf.params_.items()})
@@ -306,7 +247,7 @@ pred_purchases = bgf.conditional_expected_number_of_purchases_up_to_time(
     HOLDOUT_DAYS, cal["frequency_cal"], cal["recency_cal"], cal["T_cal"])
 print(f"Holdout purchase days - predicted {pred_purchases.sum():,.0f} vs actual {cal['frequency_holdout'].sum():,.0f} "
       f"({pred_purchases.sum() / cal['frequency_holdout'].sum() - 1:+.1%})")
-# Calibration plot: group customers by how many repeat purchases they had, compare average predicted vs actual
+
 bucket = cal["frequency_cal"].clip(upper=7).astype(int)
 calib = pd.DataFrame({"actual": cal["frequency_holdout"], "predicted": pred_purchases, "bucket": bucket}).groupby("bucket").mean()
 fig, ax = plt.subplots(figsize=(7, 3.8))
@@ -321,7 +262,6 @@ repeaters = cal[cal["frequency_cal"] > 0]
 corr = np.corrcoef(repeaters["frequency_cal"], repeaters["monetary_value_cal"])[0, 1]
 print(f"Gamma-Gamma assumption check - corr(frequency, basket value) = {corr:.2f}  (near 0 is good; > 0.3 would be a worry)")
 
-# Lesson learned: even a tiny penalizer breaks Gamma-Gamma on this data. Always sanity-check the implied average.
 def implied_mean(g):
     p, q, v = g.params_["p"], g.params_["q"], g.params_["v"]
     return p * v / (q - 1) if q > 1 else np.nan
@@ -335,19 +275,12 @@ for pen in (0.001, 0.0):
 
 ggf = GammaGammaFitter(penalizer_coef=0.0).fit(repeaters["frequency_cal"], repeaters["monetary_value_cal"])
 assert abs(implied_mean(ggf) / emp - 1) < 0.2, "Gamma-Gamma implied mean is implausible - do not trust it"
-# Expected basket per customer. For one-time buyers (frequency 0) Gamma-Gamma returns the population average.
+
 pred_basket = ggf.conditional_expected_average_profit(cal["frequency_cal"], cal["monetary_value_cal"])
 pred_bg = pred_purchases * pred_basket
 results.append(evaluate("BG/NBD + Gamma-Gamma", pred_bg))
 print(pd.DataFrame(results).set_index("model").round(3))
 
-# ======================================================================================
-# **Reading the result**
-# ======================================================================================
-
-# ======================================================================================
-# Stage 8 - ML challenger: does gradient boosting do better?
-# ======================================================================================
 def ml_features(tx_, cutoff, lookback=180):
     h = tx_[(tx_["date"] <= cutoff) & (tx_["date"] > cutoff - pd.Timedelta(days=lookback))]
     g = h.groupby("customer")
@@ -392,13 +325,6 @@ for ax, col, title in zip(axes, ["spearman", "top20_capture"], ["Ranking quality
 fig.suptitle("Holdout comparison: BG/NBD + Gamma-Gamma (orange) ranks customers best", x=0.01, ha="left", fontweight="bold")
 save(fig, "07_model_comparison.png")
 
-# ======================================================================================
-# **Verdict.** On this data the ML model does **not** beat BG/NBD + Gamma-Gamma - it is a little worse on ranking
-# ======================================================================================
-
-# ======================================================================================
-# Stage 9 - Final model: 12-month CLV for every customer
-# ======================================================================================
 cap_all = tx["revenue"].quantile(CAP_QUANTILE)
 tx_all = tx.assign(revenue=tx["revenue"].clip(upper=cap_all))
 summ = summary_data_from_transaction_data(tx_all, "customer", "date", monetary_value_col="revenue",
@@ -443,9 +369,6 @@ ax.set_xlabel("Days since last purchase"); ax.set_ylabel("P(still a customer)")
 ax.set_title("Silence = churn risk (repeat buyers)")
 save(fig, "08_clv_tiers_and_p_alive.png")
 
-# ======================================================================================
-# **Quirk worth knowing (interview gold):** in BG/NBD a customer can only "die" *right after a repeat purchase*.
-# ======================================================================================
 from excel_report import write_budget_workbook
 
 acq_rows = [(f"{band} first order - {region}", r.customers, r.avg_ltv_12m) for (band, region), r in acq.iterrows()]
@@ -497,6 +420,3 @@ key = {
 (OUT / "key_numbers.json").write_text(json.dumps(key, indent=2, default=str))
 print("Saved:", sorted(p.name for p in OUT.iterdir()))
 
-# ======================================================================================
-# Recommendation (the 3 sentences for the hiring manager)
-# ======================================================================================
